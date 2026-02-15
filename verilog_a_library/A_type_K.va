@@ -1,0 +1,72 @@
+// A-type K+ Channel (Transient Outward)
+// ======================================
+// Fast-activating, fast-inactivating K+ channel
+// Delays action potential initiation, regulates spike frequency
+//
+// Reference: Connor & Stevens (1971) J Physiol
+// Author: ENS-GI Digital Twin Project
+// License: MIT
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module A_type_K(vp, vn);
+
+// Ports
+inout vp, vn;
+electrical vp, vn;
+
+// Parameters
+parameter real g_A = 8e-3;         // Maximum conductance (S/cm²) = 8 mS/cm²
+parameter real E_K = -77e-3;       // Reversal potential (V) = -77 mV
+parameter real tau_a = 5.0;        // Activation time constant (ms)
+parameter real tau_b = 50.0;       // Inactivation time constant (ms)
+parameter real temperature = 310;
+parameter real Q10 = 2.0;
+
+// Internal variables
+real V, V_mV;
+real a, b;             // Activation and inactivation gates
+real a_inf, b_inf;
+real I_A;
+real temp_factor;
+
+analog begin
+
+    V = V(vp, vn);
+    V_mV = V * 1000.0;
+
+    temp_factor = pow(Q10, (temperature - 310.0) / 10.0);
+
+    // ========================================
+    // Activation gate (a) - fast
+    // ========================================
+
+    // Steady-state activation (Boltzmann)
+    a_inf = 1.0 / (1.0 + exp(-(V_mV + 45.0) / 14.5));
+
+    // Dynamics
+    ddt(a) = (a_inf - a) / ((tau_a / temp_factor) * 1e-3);
+
+    // ========================================
+    // Inactivation gate (b) - slower
+    // ========================================
+
+    // Steady-state inactivation (Boltzmann)
+    b_inf = 1.0 / (1.0 + exp((V_mV + 70.0) / 7.5));
+
+    // Dynamics
+    ddt(b) = (b_inf - b) / ((tau_b / temp_factor) * 1e-3);
+
+    // ========================================
+    // A-type K+ current
+    // ========================================
+
+    // I_A = g_A * a * b * (V - E_K)
+    I_A = g_A * a * b * (V - E_K);
+
+    I(vp, vn) <+ I_A;
+
+end
+
+endmodule

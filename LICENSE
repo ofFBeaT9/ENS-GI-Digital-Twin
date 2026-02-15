@@ -1,0 +1,63 @@
+MIT License
+
+Copyright (c) 2026 ENS-GI Digital Twin Project Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## Third-Party Licenses
+
+This project uses several third-party libraries. Please ensure you comply with their licenses:
+
+- **NumPy**: BSD 3-Clause License
+- **SciPy**: BSD 3-Clause License
+- **TensorFlow**: Apache License 2.0
+- **PyMC3**: Apache License 2.0
+- **ArviZ**: Apache License 2.0
+- **Matplotlib**: PSF License
+- **Seaborn**: BSD 3-Clause License
+
+## Citations
+
+If you use this software in academic research, please cite:
+
+```bibtex
+@software{ens_gi_digital_twin_2026,
+  author = {ENS-GI Digital Twin Contributors},
+  title = {ENS-GI Digital Twin: Multiscale Simulation of Enteric Nervous System and GI Motility},
+  year = {2026},
+  url = {https://github.com/yourusername/ens-gi-digital-twin},
+  version = {0.3.0}
+}
+```
+
+## Academic References
+
+Core models implemented in this software are based on:
+
+- Hodgkin, A. L., & Huxley, A. F. (1952). A quantitative description of membrane current and its application to conduction and excitation in nerve. The Journal of Physiology, 117(4), 500.
+
+- FitzHugh, R. (1961). Impulses and physiological states in theoretical models of nerve membrane. Biophysical Journal, 1(6), 445-466.
+
+- Corrias, A., & Buist, M. L. (2007). A quantitative model of gastric smooth muscle cellular activation. Annals of Biomedical Engineering, 35(9), 1595-1607.
+
+- Raissi, M., Perdikaris, P., & Karniadakis, G. E. (2019). Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations. Journal of Computational Physics, 378, 686-707.
+
+Please cite these foundational works in addition to this software.

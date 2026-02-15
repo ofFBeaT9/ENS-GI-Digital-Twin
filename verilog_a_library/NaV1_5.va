@@ -1,0 +1,90 @@
+// NaV1.5 - Fast Voltage-Gated Sodium Channel
+// ============================================
+// Implements voltage-dependent Na+ channel based on Hodgkin-Huxley formalism
+// Used in ENS neurons for action potential generation
+//
+// Reference: Hodgkin & Huxley (1952) J Physiol
+// Author: ENS-GI Digital Twin Project
+// License: MIT
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module NaV1_5(vp, vn);
+
+// Ports
+inout vp, vn;            // Positive and negative terminals
+electrical vp, vn;
+
+// Parameters
+parameter real g_Na = 120e-3;      // Maximum conductance (S/cm²) = 120 mS/cm²
+parameter real E_Na = 50e-3;       // Reversal potential (V) = 50 mV
+parameter real temperature = 310;   // Temperature (K) - 37°C
+parameter real Q10 = 3.0;          // Temperature coefficient
+
+// Internal variables
+real V;                 // Membrane voltage (V)
+real V_mV;              // Membrane voltage (mV)
+real m, h;              // Gating variables
+real alpha_m, beta_m;   // m-gate rate constants
+real alpha_h, beta_h;   // h-gate rate constants
+real tau_m, tau_h;      // Time constants
+real m_inf, h_inf;      // Steady-state values
+real I_Na;              // Sodium current (A/cm²)
+real temp_factor;       // Temperature correction factor
+
+analog begin
+
+    // Get membrane voltage
+    V = V(vp, vn);
+    V_mV = V * 1000.0;  // Convert to mV for kinetics
+
+    // Temperature correction (Q10 rule)
+    temp_factor = pow(Q10, (temperature - 310.0) / 10.0);
+
+    // ========================================
+    // Activation gate (m) - fast
+    // ========================================
+
+    // Handle singularity at V = -40 mV
+    if (abs(V_mV + 40.0) < 1e-6) begin
+        alpha_m = 1.0 * temp_factor;
+    end else begin
+        alpha_m = 0.1 * (V_mV + 40.0) / (1.0 - exp(-(V_mV + 40.0) / 10.0)) * temp_factor;
+    end
+
+    beta_m = 4.0 * exp(-(V_mV + 65.0) / 18.0) * temp_factor;
+
+    m_inf = alpha_m / (alpha_m + beta_m);
+    tau_m = 1.0 / (alpha_m + beta_m);  // ms
+
+    // Gating dynamics (m follows voltage quickly - quasi-static approximation)
+    m = m_inf;  // For very fast gates, use steady-state
+    // Alternative: ddt(m) = (m_inf - m) / tau_m;
+
+    // ========================================
+    // Inactivation gate (h) - slower
+    // ========================================
+
+    alpha_h = 0.07 * exp(-(V_mV + 65.0) / 20.0) * temp_factor;
+    beta_h = 1.0 / (1.0 + exp(-(V_mV + 35.0) / 10.0)) * temp_factor;
+
+    h_inf = alpha_h / (alpha_h + beta_h);
+    tau_h = 1.0 / (alpha_h + beta_h);  // ms
+
+    // Inactivation dynamics (differential equation)
+    ddt(h) = (h_inf - h) / (tau_h * 1e-3);  // Convert ms to s
+
+    // ========================================
+    // Sodium current
+    // ========================================
+
+    // I_Na = g_Na * m^3 * h * (V - E_Na)
+    I_Na = g_Na * pow(m, 3.0) * h * (V - E_Na);
+
+    // Current contribution to circuit
+    I(vp, vn) <+ I_Na;
+
+end
+
+endmodule

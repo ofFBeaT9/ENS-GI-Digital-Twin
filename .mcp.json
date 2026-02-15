@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "miras-memory": {
+      "command": "python",
+      "args": [
+        "c:/ens-gi digital/miras-portable/miras-api/mcp_server_v2.py"
+      ]
+    }
+  }
+}

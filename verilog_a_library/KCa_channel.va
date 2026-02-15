@@ -1,0 +1,57 @@
+// KCa - Calcium-Activated Potassium Channel
+// ==========================================
+// Ca²⁺-dependent K+ channel for afterhyperpolarization (AHP)
+// Provides negative feedback: Ca²⁺ entry → K+ efflux → hyperpolarization
+//
+// Reference: SK-type (small conductance) Ca-activated K+ channel
+// Author: ENS-GI Digital Twin Project
+// License: MIT
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module KCa_channel(vp, vn, ca_node);
+
+// Ports
+inout vp, vn;           // Voltage terminals
+input ca_node;          // Intracellular Ca²⁺ concentration node
+electrical vp, vn, ca_node;
+
+// Parameters
+parameter real g_KCa = 5e-3;       // Maximum conductance (S/cm²) = 5 mS/cm²
+parameter real E_K = -77e-3;       // Reversal potential (V) = -77 mV
+parameter real Ca_half = 0.001;    // Half-activation Ca²⁺ (mM) = 1 μM
+parameter real hill_n = 2.0;       // Hill coefficient
+
+// Internal variables
+real V;
+real Ca_i;             // Intracellular Ca²⁺ concentration (mM)
+real KCa_activation;   // Activation level (0-1)
+real I_KCa;
+
+analog begin
+
+    V = V(vp, vn);
+
+    // Read Ca²⁺ concentration from separate node
+    // In simulation, this would be connected to Ca²⁺ dynamics module
+    Ca_i = V(ca_node) * 1000.0;  // Convert from V representation to mM
+
+    // ========================================
+    // Ca²⁺-dependent activation (Hill equation)
+    // ========================================
+
+    // KCa_activation = Ca^n / (Ca^n + Ca_half^n)
+    KCa_activation = pow(Ca_i, hill_n) / (pow(Ca_i, hill_n) + pow(Ca_half, hill_n));
+
+    // ========================================
+    // KCa current
+    // ========================================
+
+    I_KCa = g_KCa * KCa_activation * (V - E_K);
+
+    I(vp, vn) <+ I_KCa;
+
+end
+
+endmodule

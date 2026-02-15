@@ -1,0 +1,104 @@
+# Coverage.py configuration for ENS-GI Digital Twin
+# See: https://coverage.readthedocs.io/en/latest/config.html
+
+[run]
+# Source packages to measure coverage for
+source = .
+
+# Omit these files/patterns from coverage
+omit =
+    */tests/*
+    */test_*.py
+    */__pycache__/*
+    */venv/*
+    */env/*
+    */.venv/*
+    */setup.py
+    */examples/*
+    */docs/*
+    */_bmad/*
+    */dashboard.jsx
+    */build/*
+    */dist/*
+    */.eggs/*
+
+# Run tests in parallel for speed (optional)
+parallel = False
+
+# Branch coverage (measure both if/else branches)
+branch = True
+
+[report]
+# Ignore errors for missing source files
+ignore_errors = False
+
+# Precision for coverage percentages
+precision = 2
+
+# Show lines that weren't executed
+show_missing = True
+
+# Skip files with 100% coverage in report
+skip_covered = False
+
+# Skip empty files
+skip_empty = True
+
+# Sort report by coverage percentage (ascending)
+sort = Cover
+
+# Exclude lines from coverage with these patterns
+exclude_lines =
+    # Standard pragma
+    pragma: no cover
+
+    # Don't complain about missing debug code
+    def __repr__
+    def __str__
+
+    # Don't complain if tests don't hit defensive assertion code
+    raise AssertionError
+    raise NotImplementedError
+
+    # Don't complain if non-runnable code isn't run
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    if not TYPE_CHECKING:
+
+    # Don't complain about abstract methods
+    @abstractmethod
+    @abc.abstractmethod
+
+    # Don't complain about type checking blocks
+    if typing.TYPE_CHECKING:
+
+    # Don't complain about pass statements
+    pass
+
+    # Don't complain about ellipsis
+    \.\.\.
+
+    # Don't complain about optional dependency imports
+    except ImportError:
+    except ModuleNotFoundError:
+    if TF_AVAILABLE:
+    if PYMC_AVAILABLE:
+    if not TF_AVAILABLE:
+    if not PYMC_AVAILABLE:
+
+[html]
+# Directory for HTML report
+directory = htmlcov
+
+# Title for HTML report
+title = ENS-GI Digital Twin Coverage Report
+
+[xml]
+# Output file for XML report (for CI/CD)
+output = coverage.xml
+
+[json]
+# Output file for JSON report
+output = coverage.json
+# Pretty-print JSON
+pretty_print = True

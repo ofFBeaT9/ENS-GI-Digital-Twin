@@ -1,0 +1,72 @@
+// ICC Pacemaker - FitzHugh-Nagumo Oscillator
+// ===========================================
+// Interstitial Cells of Cajal slow wave generator
+// Based on FitzHugh-Nagumo simplified oscillator model
+//
+// Generates autonomous oscillations at ~3 cycles/minute (0.05 Hz)
+// Alternative to full Corrias-Buist calcium clock model
+//
+// Reference: FitzHugh (1961), Nagumo et al. (1962)
+// Author: ENS-GI Digital Twin Project
+// License: MIT
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module icc_fhn_oscillator(v_out, gnd);
+
+// Ports
+output v_out;          // Oscillator voltage output
+inout gnd;
+electrical v_out, gnd;
+
+// Parameters
+parameter real omega = 0.005;      // Angular frequency (rad/ms) ≈ 48 cpm
+                                    // For 3 cpm: omega ≈ 0.000314
+parameter real amplitude = 12e-3;   // Output amplitude (V) = 12 mV
+parameter real epsilon = 0.08;      // Time scale separation
+parameter real a = 0.7;            // FHN parameter
+parameter real b = 0.8;            // FHN parameter
+parameter real phase_offset = 0.0; // Initial phase (rad)
+
+// Internal variables
+real v, w;             // FHN state variables (fast, slow)
+real dv_dt, dw_dt;
+real output_voltage;
+
+analog begin
+
+    // ========================================
+    // FitzHugh-Nagumo oscillator equations
+    // ========================================
+
+    // dv/dt = v - v³/3 - w
+    dv_dt = v - pow(v, 3.0) / 3.0 - w;
+
+    // dw/dt = ε(v + a - bw)
+    dw_dt = epsilon * (v + a - b * w);
+
+    // State updates (time in milliseconds)
+    ddt(v) = dv_dt * 1000.0;  // Convert to ms⁻¹
+    ddt(w) = dw_dt * 1000.0;
+
+    // ========================================
+    // Output current (slow wave)
+    // ========================================
+
+    // Scale and convert to voltage/current
+    output_voltage = amplitude * v;
+
+    // Output as voltage source
+    V(v_out, gnd) <+ output_voltage;
+
+end
+
+// Initial conditions
+analog initial begin
+    // Initialize with phase offset for spatial gradient
+    v = cos(phase_offset) * 0.5;
+    w = sin(phase_offset) * 0.3;
+end
+
+endmodule

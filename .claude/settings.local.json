@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash('c:\\\\ens-gi digital\\\\miras-portable' activate miras with all of the functionalities)",
+      "Bash(./install.bat)",
+      "Bash(test:*)",
+      "Bash(python -c:*)",
+      "Bash(timeout 3 python:*)",
+      "Bash(python:*)",
+      "Bash(C:/Users/ACER/AppData/Local/Programs/Python/Python312/python.exe:*)",
+      "Bash(echo:*)",
+      "Bash(pip install:*)",
+      "mcp__miras-memory__miras_store",
+      "Bash(node:*)",
+      "Bash(\"c:/ens-gi digital/Spice64/bin/ngspice.exe\" --version)",
+      "Bash(\"c:/ens-gi digital/Spice64/bin/ngspice.exe\" -v)",
+      "Bash(\"c:/ens-gi digital/Spice64/bin/ngspice.exe\" -h)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "mcp__miras-memory__miras_get_context",
+      "Bash(tasklist:*)",
+      "mcp__miras-memory__miras_stats",
+      "Bash(taskkill:*)",
+      "Bash(pkill:*)",
+      "Bash(killall:*)",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(tee:*)",
+      "Bash(python3.10 -m pytest:*)",
+      "Bash(/c/ProgramData/anaconda3/python.exe:*)",
+      "Bash(du:*)",
+      "Bash(for file in test_*.py)",
+      "Bash(do sed -i 's/from ens_gi_core import/from ens_gi_digital.core import/g; s/from ens_gi_pinn import/from ens_gi_digital.pinn import/g; s/from ens_gi_bayesian import/from ens_gi_digital.bayesian import/g; s/from ens_gi_drug_library import/from ens_gi_digital.drug_library import/g; s/from patient_data_loader import/from ens_gi_digital.patient_data import/g; s/from clinical_workflow import/from ens_gi_digital.clinical_workflow import/g' \"$file\")",
+      "Bash(done)",
+      "Bash(C:ProgramDataanaconda3python.exe -c \"from ens_gi_digital import ENSGIDigitalTwin, PINNEstimator, PatientDataLoader; print\\(''✓ Package imports successful''\\); print\\(f''  ENSGIDigitalTwin: {ENSGIDigitalTwin}''\\); print\\(f''  PINNEstimator: {PINNEstimator}''\\); print\\(f''  PatientDataLoader: {PatientDataLoader}''\\)\")",
+      "Bash(C:ProgramDataanaconda3python.exe -c \"import ens_gi_digital; print\\(f''✓ Package version: {ens_gi_digital.__version__}''\\)\")",
+      "Bash(python3:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "miras-memory"
+  ]
+}

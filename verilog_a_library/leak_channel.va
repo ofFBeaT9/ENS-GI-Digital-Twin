@@ -1,0 +1,41 @@
+// Leak Channel
+// =============
+// Passive leak conductance (non-selective)
+// Provides resting membrane potential and input resistance
+//
+// Author: ENS-GI Digital Twin Project
+// License: MIT
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module leak_channel(vp, vn);
+
+// Ports
+inout vp, vn;
+electrical vp, vn;
+
+// Parameters
+parameter real g_L = 0.3e-3;       // Leak conductance (S/cm²) = 0.3 mS/cm²
+parameter real E_L = -54.4e-3;     // Leak reversal potential (V) = -54.4 mV
+
+// Internal variables
+real V;
+real I_L;
+
+analog begin
+
+    V = V(vp, vn);
+
+    // ========================================
+    // Leak current (Ohmic)
+    // ========================================
+
+    // I_L = g_L * (V - E_L)
+    I_L = g_L * (V - E_L);
+
+    I(vp, vn) <+ I_L;
+
+end
+
+endmodule

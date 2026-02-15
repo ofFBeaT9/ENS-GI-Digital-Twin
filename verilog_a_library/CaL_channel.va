@@ -1,0 +1,65 @@
+// CaL - L-type Calcium Channel
+// =============================
+// Voltage-gated L-type Ca²⁺ channel
+// Critical for ENS neuron Ca²⁺ dynamics and neurotransmitter release
+//
+// Reference: Enteric neuron-specific parameterization
+// Author: ENS-GI Digital Twin Project
+// License: MIT
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module CaL_channel(vp, vn);
+
+// Ports
+inout vp, vn;
+electrical vp, vn;
+
+// Parameters
+parameter real g_Ca = 4e-3;        // Maximum conductance (S/cm²) = 4 mS/cm²
+parameter real E_Ca = 120e-3;      // Reversal potential (V) = 120 mV
+parameter real temperature = 310;
+parameter real Q10 = 2.5;
+
+// Internal variables
+real V, V_mV;
+real m_Ca;             // Activation gate
+real m_Ca_inf;
+real tau_m_Ca;
+real I_Ca;
+real temp_factor;
+
+analog begin
+
+    V = V(vp, vn);
+    V_mV = V * 1000.0;
+
+    temp_factor = pow(Q10, (temperature - 310.0) / 10.0);
+
+    // ========================================
+    // L-type Ca²⁺ activation
+    // ========================================
+
+    // Steady-state activation (Boltzmann function)
+    m_Ca_inf = 1.0 / (1.0 + exp(-(V_mV + 20.0) / 9.0));
+
+    // Voltage-dependent time constant
+    tau_m_Ca = (1.0 + 10.0 / (1.0 + exp((V_mV + 20.0) / 9.0))) / temp_factor;  // ms
+
+    // Gating dynamics
+    ddt(m_Ca) = (m_Ca_inf - m_Ca) / (tau_m_Ca * 1e-3);
+
+    // ========================================
+    // Calcium current
+    // ========================================
+
+    // I_Ca = g_Ca * m_Ca * (V - E_Ca)
+    // Note: Some models use m_Ca^2, but we use m_Ca for simplicity
+    I_Ca = g_Ca * m_Ca * (V - E_Ca);
+
+    I(vp, vn) <+ I_Ca;
+
+end
+
+endmodule

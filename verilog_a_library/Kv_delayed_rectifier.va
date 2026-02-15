@@ -1,0 +1,70 @@
+// Kv - Delayed Rectifier Potassium Channel
+// =========================================
+// Implements voltage-dependent K+ channel (n-type gating)
+// Critical for action potential repolarization
+//
+// Reference: Hodgkin & Huxley (1952) J Physiol
+// Author: ENS-GI Digital Twin Project
+// License: MIT
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module Kv_delayed_rectifier(vp, vn);
+
+// Ports
+inout vp, vn;
+electrical vp, vn;
+
+// Parameters
+parameter real g_K = 36e-3;        // Maximum conductance (S/cm²) = 36 mS/cm²
+parameter real E_K = -77e-3;       // Reversal potential (V) = -77 mV
+parameter real temperature = 310;   // Temperature (K)
+parameter real Q10 = 3.0;
+
+// Internal variables
+real V, V_mV;
+real n;                // Gating variable
+real alpha_n, beta_n;
+real tau_n, n_inf;
+real I_K;
+real temp_factor;
+
+analog begin
+
+    V = V(vp, vn);
+    V_mV = V * 1000.0;
+
+    temp_factor = pow(Q10, (temperature - 310.0) / 10.0);
+
+    // ========================================
+    // Activation gate (n)
+    // ========================================
+
+    // Handle singularity at V = -55 mV
+    if (abs(V_mV + 55.0) < 1e-6) begin
+        alpha_n = 0.1 * temp_factor;
+    end else begin
+        alpha_n = 0.01 * (V_mV + 55.0) / (1.0 - exp(-(V_mV + 55.0) / 10.0)) * temp_factor;
+    end
+
+    beta_n = 0.125 * exp(-(V_mV + 65.0) / 80.0) * temp_factor;
+
+    n_inf = alpha_n / (alpha_n + beta_n);
+    tau_n = 1.0 / (alpha_n + beta_n);  // ms
+
+    // Gating dynamics
+    ddt(n) = (n_inf - n) / (tau_n * 1e-3);  // Convert ms to s
+
+    // ========================================
+    // Potassium current
+    // ========================================
+
+    // I_K = g_K * n^4 * (V - E_K)
+    I_K = g_K * pow(n, 4.0) * (V - E_K);
+
+    I(vp, vn) <+ I_K;
+
+end
+
+endmodule

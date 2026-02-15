@@ -1,0 +1,157 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  test:
+    name: Test on Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-cov pytest-mock pytest-benchmark
+        pip install numpy scipy matplotlib
+
+    - name: Install core package
+      run: |
+        pip install -e .
+
+    - name: Run tests (fast only)
+      run: |
+        pytest tests/ -v -m "not slow" --cov=. --cov-report=xml --cov-report=term-missing
+
+    - name: Upload coverage to Codecov
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  test-with-ai:
+    name: Test with AI frameworks
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-cov pytest-mock
+        pip install numpy scipy matplotlib
+
+    - name: Install TensorFlow
+      run: |
+        pip install tensorflow
+
+    - name: Install PyMC3
+      run: |
+        pip install pymc3 arviz
+
+    - name: Install core package
+      run: |
+        pip install -e .
+
+    - name: Run PINN tests
+      run: |
+        pytest tests/test_pinn.py -v -m "pinn and not slow" --tb=short
+      continue-on-error: true  # Don't fail if PINN tests fail
+
+    - name: Run Bayesian tests
+      run: |
+        pytest tests/test_bayesian.py -v -m "bayesian and not slow" --tb=short
+      continue-on-error: true  # Don't fail if Bayesian tests fail
+
+  lint:
+    name: Lint code
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install linting tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black
+
+    - name: Run Black (check only)
+      run: |
+        black --check --diff .
+      continue-on-error: true  # Don't fail CI, just report
+
+    - name: Run Flake8
+      run: |
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --max-line-length=100 --statistics
+      continue-on-error: true  # Don't fail CI, just report
+
+  test-hardware:
+    name: Test hardware export
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest numpy scipy
+        pip install -e .
+
+    - name: Run hardware export tests
+      run: |
+        pytest tests/test_hardware_export.py -v -m "hardware and not slow"
+
+    - name: Install ngspice (optional)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ngspice || true
+      continue-on-error: true
+
+    - name: Test SPICE netlist generation
+      run: |
+        pytest tests/test_hardware_export.py::test_spice_netlist_valid -v
+      continue-on-error: true

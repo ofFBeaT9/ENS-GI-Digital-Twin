@@ -1,0 +1,44 @@
+// Gap Junction
+// ============
+// Electrical coupling between adjacent cells
+// Bidirectional current flow proportional to voltage difference
+//
+// Author: ENS-GI Digital Twin Project
+// License: MIT
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module gap_junction(cell1, cell2, gnd);
+
+// Ports
+inout cell1, cell2, gnd;
+electrical cell1, cell2, gnd;
+
+// Parameters
+parameter real g_gap = 0.3e-3;     // Gap junction conductance (S/cm²) = 0.3 mS/cm²
+
+// Internal variables
+real V1, V2;
+real I_gap;
+
+analog begin
+
+    V1 = V(cell1, gnd);
+    V2 = V(cell2, gnd);
+
+    // ========================================
+    // Gap junction current (Ohmic coupling)
+    // ========================================
+
+    // Current flows from higher to lower voltage
+    // I_gap = g_gap * (V2 - V1)
+    I_gap = g_gap * (V2 - V1);
+
+    // Apply current to both cells (Newton's third law)
+    I(cell1, gnd) <+ I_gap;    // Flows into cell1
+    I(cell2, gnd) <+ -I_gap;   // Flows out of cell2
+
+end
+
+endmodule

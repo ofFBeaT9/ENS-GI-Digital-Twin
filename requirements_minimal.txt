@@ -1,0 +1,21 @@
+# ENS-GI Digital Twin - Minimal Working Requirements
+# PyMC3/Bayesian is OPTIONAL - PINN framework works great without it
+
+# Core dependencies
+numpy>=1.21.0
+scipy>=1.7.0
+pandas>=1.3.0
+matplotlib>=3.4.0
+
+# Machine Learning (PINN)
+tensorflow>=2.10.0
+scikit-learn>=1.0.0
+
+# Testing
+pytest>=7.0.0
+
+# Progress bars
+tqdm>=4.62.0
+
+# Visualization
+seaborn>=0.11.0
