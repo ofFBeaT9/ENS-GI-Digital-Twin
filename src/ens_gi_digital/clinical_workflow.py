@@ -67,10 +67,10 @@ def run_clinical_analysis(patient_id: str, data_dir: str = 'patient_data/'):
 
             # Generate synthetic training data
             print("  Generating training dataset...")
-                try:
+            try:
                 dataset = pinn.generate_synthetic_dataset(n_samples=500)
                 print(f"  ✓ Generated {len(dataset['features'])} training samples")
-                except Exception as e:
+            except Exception as e:
                 print(f"  ⚠ Warning: Could not generate training data: {e}")
                 print("  Skipping PINN training, using default parameters")
                 dataset = None
@@ -87,7 +87,7 @@ def run_clinical_analysis(patient_id: str, data_dir: str = 'patient_data/'):
 
             # Estimate parameters from patient data
             print("  Estimating parameters with bootstrap uncertainty...")
-                try:
+            try:
                 # Use patient data if available, otherwise use defaults
                 voltages = patient_data['voltages']
                 forces = patient_data['forces'] if patient_data['forces'] is not None else np.zeros_like(voltages)
@@ -98,7 +98,7 @@ def run_clinical_analysis(patient_id: str, data_dir: str = 'patient_data/'):
                     n_bootstrap=50
                 )
                 print("  ✓ Parameter estimation complete")
-                except Exception as e:
+            except Exception as e:
                 print(f"  ⚠ Warning: Parameter estimation failed: {e}")
                 # Use default estimates
                 estimates = {
@@ -106,7 +106,16 @@ def run_clinical_analysis(patient_id: str, data_dir: str = 'patient_data/'):
                     'g_K': {'mean': 36.0, 'std': 3.0},
                     'omega': {'mean': 0.3, 'std': 0.03}
                 }
-        else:
+        except Exception as e:
+            print(f"  ⚠ PINN estimation failed: {e}")
+            # Use default estimates
+            estimates = {
+                'g_Na': {'mean': 120.0, 'std': 10.0},
+                'g_K': {'mean': 36.0, 'std': 3.0},
+                'omega': {'mean': 0.3, 'std': 0.03}
+            }
+
+    if estimates is None:
             # Use default estimates
             estimates = {
                 'g_Na': {'mean': 120.0, 'std': 10.0},

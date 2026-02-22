@@ -6,7 +6,6 @@ build-backend = "setuptools.build_meta"
 name = "ens-gi-digital-twin"
 version = "0.3.0"
 description = "Physics-informed digital twin for enteric nervous system and GI motility"
-readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

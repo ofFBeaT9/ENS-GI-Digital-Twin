@@ -7,8 +7,15 @@ import os
 
 # Read README for long description
 def read_file(filename):
-    with open(os.path.join(os.path.dirname(__file__), filename), encoding='utf-8') as f:
-        return f.read()
+    filepath = os.path.join(os.path.dirname(__file__), filename)
+    # Try encodings in order: utf-8-sig (UTF-8 BOM), utf-16 (Windows BOM), utf-8, latin-1
+    for enc in ('utf-8-sig', 'utf-16', 'utf-8', 'latin-1'):
+        try:
+            with open(filepath, encoding=enc) as f:
+                return f.read()
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return ''
 
 setup(
     name='ens-gi-digital-twin',
@@ -16,8 +23,6 @@ setup(
     author='Mahdad',
     author_email='your.email@example.com',
     description='Multiscale Digital Twin for Enteric Nervous System and GI Motility',
-    long_description=read_file('README.md'),
-    long_description_content_type='text/markdown',
     url='https://github.com/yourusername/ens-gi-digital-twin',
     license='MIT',
 
@@ -42,9 +47,9 @@ setup(
             'tensorflow-probability>=0.22.0',
         ],
         'bayesian': [
-            'pymc3>=3.11.0',
+            'pymc>=5.10.0',  # Modern PyMC (v5+)
             'arviz>=0.12.0',
-            'theano-pymc>=1.1.2',
+            'pytensor>=2.18.0',  # Modern backend
         ],
         'optimization': [
             'numba>=0.55.0',
@@ -61,9 +66,9 @@ setup(
         'all': [
             'tensorflow>=2.15.0',
             'tensorflow-probability>=0.22.0',
-            'pymc3>=3.11.0',
+            'pymc>=5.10.0',  # Modern PyMC (v5+)
             'arviz>=0.12.0',
-            'theano-pymc>=1.1.2',
+            'pytensor>=2.18.0',  # Modern backend
             'numba>=0.55.0',
             'tqdm>=4.62.0',
             'pytest>=7.0.0',

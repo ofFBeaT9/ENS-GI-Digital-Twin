@@ -81,3 +81,22 @@ temp/
 *.tmp
 *.bak
 *.swp
+
+# Claude temp files
+tmpclaude-*-cwd
+
+# OS / shell artifacts
+nul
+wget-log
+wget-log.*
+
+# Installers
+Miniconda3*.sh
+Miniconda3*.sh.*
+
+# Test output artifacts
+test_out.txt
+test_results.txt
+
+# Simulation cache
+.cache/

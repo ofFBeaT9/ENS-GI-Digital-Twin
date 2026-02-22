@@ -70,23 +70,30 @@ class TestPINNEstimator:
     """Test PINN estimator functionality."""
 
     @pytest.fixture
-    def digital_twin(self):
-        """Create a digital twin for testing."""
-        return ENSGIDigitalTwin(n_segments=10)
+    def digital_twin(self, reset_seeds):
+        """Create a digital twin for testing with deterministic random state."""
+        twin = ENSGIDigitalTwin(n_segments=10)
+        yield twin
+        # Cleanup
+        del twin
 
     @pytest.fixture
-    def pinn_estimator(self, digital_twin):
-        """Create a PINN estimator for testing."""
+    def pinn_estimator(self, digital_twin, reset_seeds):
+        """Create a PINN estimator for testing with deterministic random state."""
         config = PINNConfig(
             architecture='mlp',
             hidden_dims=[32, 16],
             learning_rate=1e-3,
+            batch_size=8,  # Small for testing
         )
-        return PINNEstimator(
+        estimator = PINNEstimator(
             digital_twin=digital_twin,
             config=config,
             parameter_names=['g_Na', 'g_K', 'omega']
         )
+        yield estimator
+        # Cleanup temporary directories and resources
+        del estimator
 
     def test_pinn_initialization(self, pinn_estimator):
         """Test PINN estimator initializes correctly."""
@@ -125,12 +132,15 @@ class TestPINNEstimator:
 
     def test_synthetic_data_generation(self, pinn_estimator):
         """Test synthetic dataset generation."""
-        features, params = pinn_estimator.generate_synthetic_dataset(
+        dataset = pinn_estimator.generate_synthetic_dataset(
             n_samples=10,  # Small for testing
             duration=500.0,
             dt=0.1,
             noise_level=0.02
         )
+
+        features = dataset['features']
+        params = dataset['parameters']
 
         assert features.shape == (10, 110)
         assert params.shape == (10, 3)
@@ -154,28 +164,37 @@ class TestPINNEstimator:
         assert data_loss.numpy() >= 0
         assert physics_loss.numpy() >= 0
 
-    def test_train_on_small_dataset(self, pinn_estimator):
-        """Test training on a very small dataset."""
+    def test_train_on_small_dataset(self, pinn_estimator, reset_seeds):
+        """Test training on a very small dataset (edge case)."""
         # Generate tiny dataset
-        features, params = pinn_estimator.generate_synthetic_dataset(
+        dataset = pinn_estimator.generate_synthetic_dataset(
             n_samples=20,
             duration=300.0
         )
 
-        # Train for just a few epochs
+        features = dataset['features']
+        params = dataset['parameters']
+
+        # Train with explicit small batch size for tiny dataset
         history = pinn_estimator.train(
             features=features,
             parameters=params,
-            epochs=10,
+            epochs=5,  # Reduced from 10 for faster tests without GPU
             verbose=0,
-            generate_data=False
+            generate_data=False,
+            batch_size=4  # Explicitly small batch size for tiny dataset
         )
 
-        assert len(history['train_loss']) == 10
-        assert len(history['val_loss']) == 10
+        assert 'train_loss' in history
+        assert 'val_loss' in history
+        assert len(history['train_loss']) == 5
+        assert len(history['val_loss']) == 5
 
-        # Loss should be finite
-        assert all(np.isfinite(loss) for loss in history['train_loss'])
+        # Loss should be finite (may be high due to small dataset, just check finite)
+        assert all(np.isfinite(loss) for loss in history['train_loss']), \
+            f"Non-finite train losses: {history['train_loss']}"
+        assert all(np.isfinite(loss) for loss in history['val_loss']), \
+            f"Non-finite val losses: {history['val_loss']}"
 
 
 @pytest.mark.skipif(not TF_AVAILABLE, reason="TensorFlow not installed")
@@ -183,18 +202,21 @@ class TestPINNParameterRecovery:
     """Test PINN ability to recover known parameters."""
 
     @pytest.fixture
-    def trained_pinn(self):
-        """Create and train a PINN on synthetic data."""
+    def trained_pinn(self, reset_seeds):
+        """Create and train a PINN on synthetic data with deterministic random state."""
         twin = ENSGIDigitalTwin(n_segments=10)
         pinn = PINNEstimator(
             digital_twin=twin,
-            config=PINNConfig(hidden_dims=[32, 16], lambda_physics=0.05),
+            config=PINNConfig(hidden_dims=[32, 16], lambda_physics=0.05, batch_size=8),
             parameter_names=['g_Na', 'g_K', 'omega']
         )
 
-        # Train on small dataset
-        pinn.train(epochs=50, n_synthetic_samples=50, verbose=0)
-        return pinn
+        # Train on small dataset (reduced for faster testing without GPU)
+        pinn.train(epochs=20, n_synthetic_samples=50, verbose=0, batch_size=8)
+        yield pinn
+        # Cleanup
+        del pinn
+        del twin
 
     def test_parameter_estimation(self, trained_pinn):
         """Test parameter estimation from simulated data."""
@@ -209,22 +231,22 @@ class TestPINNParameterRecovery:
         # Run simulation
         result = test_twin.run(1000, dt=0.1, I_stim={3: 10.0}, verbose=False)
 
-        # Estimate parameters
-        estimates, uncertainties = trained_pinn.estimate_parameters(
+        # Estimate parameters (returns nested dict format)
+        estimates = trained_pinn.estimate_parameters(
             voltages=result['voltages'],
             forces=result['force'],
             calcium=result['calcium'],
             n_bootstrap=10  # Small for testing
         )
 
-        # Check that estimates are reasonable
+        # Check that estimates are reasonable (new API format)
         assert 'g_Na' in estimates
-        assert estimates['g_Na'] > 0
-        assert uncertainties['g_Na'] > 0
+        assert estimates['g_Na']['mean'] > 0
+        assert estimates['g_Na']['std'] > 0
 
         # Note: With limited training, we don't expect high accuracy
         # Just check that the estimate is in a reasonable range
-        assert 50 < estimates['g_Na'] < 250
+        assert 50 < estimates['g_Na']['mean'] < 250
 
     def test_model_save_load(self, trained_pinn, tmp_path):
         """Test saving and loading PINN model."""
@@ -232,8 +254,8 @@ class TestPINNParameterRecovery:
         save_path = str(tmp_path / "test_pinn_model")
         trained_pinn.save(save_path)
 
-        # Check files exist
-        assert os.path.exists(save_path)
+        # Check files exist (.keras extension is added automatically)
+        assert os.path.exists(save_path + '.keras') or os.path.exists(save_path)
         assert os.path.exists(save_path + '_config.json')
 
         # Load model
@@ -254,10 +276,12 @@ class TestPINNValidation:
         pinn = PINNEstimator(twin, parameter_names=['g_Na', 'g_K'])
 
         # Create small synthetic test set
-        features, true_params = pinn.generate_synthetic_dataset(n_samples=10)
+        dataset = pinn.generate_synthetic_dataset(n_samples=10)
+        features = dataset['features']
+        true_params = dataset['parameters']
 
-        # Train minimally
-        pinn.train(features=features, parameters=true_params, epochs=20, verbose=0)
+        # Train minimally (reduced for faster testing without GPU)
+        pinn.train(features=features, parameters=true_params, epochs=10, verbose=0)
 
         # Validate
         results = pinn.validate_on_test_set(features, true_params)

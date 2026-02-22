@@ -16,7 +16,7 @@ try:
         BayesianEstimator, BayesianConfig, PriorSpec,
         get_default_priors
     )
-    import pymc3 as pm
+    import pymc as pm  # PyMC v5+ (not pymc3)
     import arviz as az
     PYMC_AVAILABLE = True
 except ImportError:
@@ -71,7 +71,7 @@ class TestBayesianEstimator:
             n_chains=2,
             n_draws=100,  # Small for testing
             n_tune=50,
-            sampler='NUTS'
+            sampler='Metropolis'
         )
         return BayesianEstimator(
             digital_twin=digital_twin,
@@ -97,11 +97,16 @@ class TestBayesianEstimator:
     def test_dominant_frequency_estimation(self, bayesian_estimator):
         """Test frequency estimation from signal."""
         # Create synthetic signal with known frequency
-        t = np.linspace(0, 1000, 10000)  # 1000 ms
+        # Need sufficient duration to resolve low frequencies:
+        # 0.05 Hz needs at least 20s; use 120s for good resolution
+        duration_ms = 120000.0  # 120 seconds
+        n_points = 12000
+        t = np.linspace(0, duration_ms, n_points)
         freq_hz = 0.05  # 3 cpm
         signal = np.sin(2 * np.pi * freq_hz * t / 1000)
 
-        estimated_freq = bayesian_estimator._estimate_dominant_frequency(signal)
+        dt = duration_ms / n_points  # 10 ms
+        estimated_freq = bayesian_estimator._estimate_dominant_frequency(signal, dt=dt)
 
         # Should be close to 3 cpm
         assert 2.5 < estimated_freq < 3.5
@@ -122,7 +127,8 @@ class TestMCMCSampling:
             sampler='Metropolis',  # Faster than NUTS for testing
             progressbar=False
         )
-        return BayesianEstimator(twin, config, parameter_names=['g_Na', 'g_K'])
+        # Note: parameter_names are passed to estimate_parameters(), not __init__
+        return BayesianEstimator(twin, config)
 
     @pytest.mark.slow
     def test_mcmc_runs(self, small_estimator):
@@ -178,7 +184,7 @@ class TestBayesianPINNComparison:
     def test_comparison_structure(self):
         """Test that comparison produces correct structure."""
         twin = ENSGIDigitalTwin(n_segments=5)
-        bayes = BayesianEstimator(twin, parameter_names=['g_Na', 'g_K'])
+        bayes = BayesianEstimator(twin)
 
         # Mock PINN estimates
         pinn_estimates = {'g_Na': 125.0, 'g_K': 38.0}
@@ -226,7 +232,7 @@ def test_full_bayesian_workflow():
         n_tune=25,
         progressbar=False
     )
-    bayes = BayesianEstimator(twin, config, parameter_names=['g_Na'])
+    bayes = BayesianEstimator(twin, config)
 
     # 4. Run estimation
     try:

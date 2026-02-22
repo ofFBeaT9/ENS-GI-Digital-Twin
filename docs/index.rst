@@ -46,7 +46,7 @@ Installation::
 
 Basic usage::
 
-   from ens_gi_core import ENSGIDigitalTwin
+   from ens_gi_digital.core import ENSGIDigitalTwin
 
    # Create digital twin
    twin = ENSGIDigitalTwin(n_segments=10)
@@ -106,8 +106,8 @@ Estimate patient-specific parameters from clinical data:
 
 .. code-block:: python
 
-   from ens_gi_pinn import PINNEstimator, PINNConfig
-   from ens_gi_bayesian import BayesianEstimator
+   from ens_gi_digital.pinn import PINNEstimator, PINNConfig
+   from ens_gi_digital.bayesian import BayesianEstimator
 
    # PINN (fast)
    pinn = PINNEstimator(twin, PINNConfig())

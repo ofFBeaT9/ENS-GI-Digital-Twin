@@ -32,7 +32,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install pytest pytest-cov pytest-mock pytest-benchmark
-        pip install numpy scipy matplotlib
+        pip install numpy scipy matplotlib pandas
 
     - name: Install core package
       run: |
@@ -75,9 +75,9 @@ jobs:
       run: |
         pip install tensorflow
 
-    - name: Install PyMC3
+    - name: Install PyMC
       run: |
-        pip install pymc3 arviz
+        pip install pymc arviz pytensor
 
     - name: Install core package
       run: |
@@ -138,12 +138,12 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pytest numpy scipy
+        pip install pytest numpy scipy pandas
         pip install -e .
 
     - name: Run hardware export tests
       run: |
-        pytest tests/test_hardware_export.py -v -m "hardware and not slow"
+        pytest tests/test_hardware_export.py -v -m "not slow"
 
     - name: Install ngspice (optional)
       run: |

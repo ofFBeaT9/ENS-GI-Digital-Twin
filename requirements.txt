@@ -12,9 +12,9 @@ tensorflow>=2.15.0
 tensorflow-probability>=0.22.0
 
 # Phase 3: Bayesian Inference
-pymc3>=3.11.0
+pymc>=5.10.0  # Modern PyMC (v5+), replaces deprecated PyMC3
 arviz>=0.12.0
-theano-pymc>=1.1.2
+pytensor>=2.18.0  # Modern backend, replaces Theano
 
 # Visualization
 matplotlib>=3.5.0

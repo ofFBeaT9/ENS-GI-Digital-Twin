@@ -624,6 +624,57 @@ class ICCPacemaker:
         """Estimate dominant frequency (cpm)."""
         return self.params.omega / (2 * np.pi) * 1000 * 60  # rad/ms → cpm
 
+    def get_propagation_velocity(self) -> Dict[str, float]:
+        """Estimate slow-wave propagation velocity and direction.
+
+        Spatiotemporal phase analysis inspired by the Virtual Intestine
+        framework (Du et al., Front. Physiol. 2016).  Uses the current
+        instantaneous phase of each FHN oscillator to extract the spatial
+        phase gradient, wave velocity, and propagation coherence.
+
+        Returns:
+            dict with keys:
+                velocity_segs_per_sec  - propagation speed (segments / second)
+                direction              - +1.0 oral→aboral, -1.0 retrograde
+                phase_gradient_rad_per_seg - mean spatial phase gradient
+                propagation_uniformity - wave coherence score 0→1
+                wavelength_segs        - spatial wavelength in segments
+        """
+        phases = self.get_phase()  # [n_segments], range (-π, π)
+
+        # Unwrap phases to remove discontinuities, then compute gradient
+        phases_unwrapped = np.unwrap(phases)
+        d_phase = np.diff(phases_unwrapped)  # [n_segments - 1]
+        phase_gradient = float(np.mean(d_phase))  # rad / segment
+
+        # Direction: negative gradient = wave propagates from segment 0 → n
+        direction = 1.0 if phase_gradient <= 0 else -1.0
+
+        # Velocity: v = f × λ  where λ = 2π / |dφ/dx|
+        freq_hz = self.get_frequency() / 60.0  # cpm → Hz
+        if abs(phase_gradient) > 1e-6:
+            wavelength_segs = 2.0 * np.pi / abs(phase_gradient)
+        else:
+            wavelength_segs = float(self.n)
+        velocity_segs_per_sec = freq_hz * wavelength_segs
+
+        # Coherence: how uniform is the spatial phase gradient?
+        if len(d_phase) > 1:
+            uniformity = float(np.clip(
+                1.0 - np.std(d_phase) / (abs(phase_gradient) + 1e-6),
+                0.0, 1.0
+            ))
+        else:
+            uniformity = 1.0
+
+        return {
+            'velocity_segs_per_sec': float(velocity_segs_per_sec),
+            'direction': float(direction),
+            'phase_gradient_rad_per_seg': float(phase_gradient),
+            'propagation_uniformity': float(uniformity),
+            'wavelength_segs': float(wavelength_segs),
+        }
+
 
 class SmoothMuscle:
     """Smooth muscle contraction model.
@@ -876,12 +927,14 @@ class ENSGIDigitalTwin:
         
         # Convert to numpy arrays
         if record:
+            force_array = np.array(self.recording['force'])
             return {
                 'time': np.array(self.recording['time']),
                 'voltages': np.array(self.recording['voltages']),
                 'calcium': np.array(self.recording['calcium']),
                 'icc_current': np.array(self.recording['icc_current']),
-                'force': np.array(self.recording['force']),
+                'force': force_array,
+                'forces': force_array,  # Alias for backward compatibility
             }
         return {}
     
@@ -1245,24 +1298,84 @@ endmodule
             
             # ICC
             'icc_frequency_cpm': self.icc.get_frequency(),
+            'icc_propagation': self.icc.get_propagation_velocity(),
             
             # Profile
             'profile': self._profile,
         }
         
         return biomarkers
-    
+
+    def predict_manometry(self,
+                          baseline_mmhg: float = 12.0,
+                          max_pressure_mmhg: float = 80.0) -> Dict:
+        """Predict High-Resolution Manometry (HRM) pressure trace from simulation.
+
+        Converts simulated smooth muscle contractile force to luminal pressure,
+        enabling direct comparison with clinical HRM recordings.
+
+        Approach inspired by Djoumessi et al. (2024) "Digital Twin Model of
+        Colon Electromechanics for Manometry Prediction."
+
+        Physics:
+            P(x, t) = P_baseline + P_max * force(x, t)
+            where force ∈ [0, 1] is the normalised smooth muscle activation.
+
+        Args:
+            baseline_mmhg:      Resting luminal pressure (mmHg), typically 10-15.
+            max_pressure_mmhg:  Maximum contractile pressure (mmHg), typically 60-100.
+
+        Returns:
+            dict with:
+                time_ms      - simulation time array [T]
+                pressure     - pressure array [T, n_segments] in mmHg
+                mean_pressure  - mean pressure per segment [n_segments]
+                peak_pressure  - peak pressure per segment [n_segments]
+                propagation_velocity_segs_per_sec - inferred from ICC phase
+        """
+        if not self.recording['time']:
+            raise RuntimeError(
+                "No simulation data. Call run() before predict_manometry()."
+            )
+
+        forces = np.array(self.recording['force'])   # [T, n_segments]
+        time_ms = np.array(self.recording['time'])   # [T]
+
+        # Linear force-to-pressure conversion
+        pressure = baseline_mmhg + max_pressure_mmhg * forces  # [T, n_segments]
+
+        icc_prop = self.icc.get_propagation_velocity()
+
+        return {
+            'time_ms': time_ms,
+            'pressure': pressure,
+            'mean_pressure': pressure.mean(axis=0),
+            'peak_pressure': pressure.max(axis=0),
+            'baseline_mmhg': baseline_mmhg,
+            'max_pressure_mmhg': max_pressure_mmhg,
+            'propagation_velocity_segs_per_sec': icc_prop['velocity_segs_per_sec'],
+        }
+
     def clinical_report(self) -> str:
         """Generate human-readable clinical interpretation."""
         bio = self.extract_biomarkers()
         if not bio:
             return "No simulation data available. Run simulation first."
-        
+
+        # Profile label mapping
+        profile_labels = {
+            'healthy': 'Healthy',
+            'ibs_d': 'IBS-D (Diarrhea)',
+            'ibs_c': 'IBS-C (Constipation)',
+            'ibs_m': 'IBS-M (Mixed)',
+        }
+        profile_label = profile_labels.get(bio['profile'], bio['profile'])
+
         lines = [
             "=" * 60,
             "ENS-GI DIGITAL TWIN — CLINICAL REPORT",
             "=" * 60,
-            f"Profile: {bio['profile']}",
+            f"Profile: {profile_label}",
             f"ICC Frequency: {bio['icc_frequency_cpm']:.1f} cpm "
             f"({'normal' if 2 < bio['icc_frequency_cpm'] < 4 else 'ABNORMAL'})",
             "",
