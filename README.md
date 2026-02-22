@@ -530,8 +530,4 @@ If you use this software in your research, please cite:
 ---
 
 **Last Updated**: 2026-02-22
-#   E N S - G I - D i g i t a l - T w i n 
- 
- #   E N S - G I - D i g i t a l - T w i n 
- 
- 
+#
