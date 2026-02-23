@@ -84,6 +84,8 @@ temp/
 
 # Claude temp files
 tmpclaude-*-cwd
+_bmad/
+.claude/
 
 # OS / shell artifacts
 nul
