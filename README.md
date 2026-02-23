@@ -16,8 +16,7 @@ The **ENS-GI Digital Twin** is a comprehensive computational framework for simul
 2. **Neuromorphic Hardware**: SPICE/Verilog-A export for analog circuit implementation
 3. **Clinical Predictor**: Patient-specific parameterization for IBS diagnosis and treatment
 
-This implementation represents a **3-year phased development** as outlined in the research paper "Building a Gut Digital Twin."
-
+This implementation represents a **3-year phased development** 
 ---
 
 ## 🏗️ Architecture
