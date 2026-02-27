@@ -103,7 +103,8 @@ class TestPINNEstimator:
 
     def test_parameter_normalization(self, pinn_estimator):
         """Test parameter normalization and denormalization."""
-        params = np.array([120.0, 36.0, 0.005])  # g_Na, g_K, omega
+        # omega must be within configured physiological bounds.
+        params = np.array([120.0, 36.0, 0.0005])  # g_Na, g_K, omega
 
         # Normalize
         normalized = pinn_estimator._normalize_parameters(params)
@@ -158,11 +159,52 @@ class TestPINNEstimator:
         params = tf.constant(np.random.rand(16, 3), dtype=tf.float32)
 
         # Single training step
-        loss, data_loss, physics_loss = pinn_estimator._train_step(features, params)
+        loss, data_loss, physics_loss, barrier_loss = pinn_estimator._train_step(
+            features, params, pinn_estimator.config.lambda_data, pinn_estimator.config.lambda_physics
+        )
 
         assert loss.numpy() > 0
         assert data_loss.numpy() >= 0
         assert physics_loss.numpy() >= 0
+        assert barrier_loss.numpy() >= 0
+
+    def test_barrier_loss_penalizes_out_of_bounds(self, pinn_estimator):
+        """Barrier loss should rise sharply for invalid normalized predictions."""
+        in_range = tf.constant([[0.3, 0.5, 0.7]], dtype=tf.float32)
+        out_range = tf.constant([[-0.2, 0.5, 1.4]], dtype=tf.float32)
+
+        loss_in = pinn_estimator._compute_barrier_loss(in_range).numpy()
+        loss_out = pinn_estimator._compute_barrier_loss(out_range).numpy()
+
+        assert loss_in >= 0.0
+        assert loss_out > loss_in
+
+    def test_adaptive_loss_balance_tracks_lambda(self, digital_twin, reset_seeds):
+        """Adaptive balancing should populate lambda history."""
+        config = PINNConfig(
+            architecture='mlp',
+            hidden_dims=[32, 16],
+            learning_rate=1e-3,
+            batch_size=8,
+            adaptive_loss_balance=True,
+        )
+        estimator = PINNEstimator(
+            digital_twin=digital_twin,
+            config=config,
+            parameter_names=['g_Na', 'g_K', 'omega'],
+        )
+        dataset = estimator.generate_synthetic_dataset(n_samples=20, duration=300.0)
+        history = estimator.train(
+            features=dataset['features'],
+            parameters=dataset['parameters'],
+            epochs=4,
+            verbose=0,
+            generate_data=False,
+            batch_size=4,
+        )
+        assert 'lambda_physics' in history
+        assert len(history['lambda_physics']) == 4
+        assert np.all(np.isfinite(history['lambda_physics']))
 
     def test_train_on_small_dataset(self, pinn_estimator, reset_seeds):
         """Test training on a very small dataset (edge case)."""

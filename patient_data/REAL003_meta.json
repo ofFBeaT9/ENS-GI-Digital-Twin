@@ -1,0 +1,30 @@
+{
+  "patient_id": "REAL003",
+  "source": {
+    "egg_dataset": "Zenodo EGG (Popovic 2020)",
+    "hrm_dataset": "SPARC Colonic HRM (Dinning/Brookes 2019)",
+    "egg_subject": 3,
+    "egg_condition": "postprandial",
+    "hrm_subject": 17
+  },
+  "preprocessing": {
+    "hrm_resampled_to_egg_time": true,
+    "hrm_normalized_0_1": true,
+    "match_model_voltage_range": true,
+    "target_vm_mean_mV": -65.0,
+    "target_vm_std_mV": 3.0,
+    "clip_vm_min_mV": -85.0,
+    "clip_vm_max_mV": -40.0,
+    "max_duration_ms": 1199500.0
+  },
+  "summary": {
+    "n_timepoints": 2400,
+    "duration_ms": 1199500.0,
+    "egg_channels": 3,
+    "hrm_channels": 12,
+    "egg_min_mV": -77.95199326289604,
+    "egg_max_mV": -50.373655074083004,
+    "hrm_min": 0.1556697682956102,
+    "hrm_max": 0.9020939525295454
+  }
+}

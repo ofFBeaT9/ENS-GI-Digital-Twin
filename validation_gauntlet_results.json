@@ -1,0 +1,25 @@
+{
+  "overall_pass": false,
+  "sections": {
+    "fft": {
+      "passed": null,
+      "summary_label": "SKIP"
+    },
+    "bayesian": {
+      "passed": null,
+      "summary_label": "SKIP"
+    },
+    "hrm": {
+      "passed": null,
+      "summary_label": "SKIP"
+    },
+    "spice": {
+      "passed": null,
+      "summary_label": "SKIP (ngspice not found)"
+    },
+    "verilog_a": {
+      "passed": null,
+      "summary_label": "SKIP (ngspice not found)"
+    }
+  }
+}

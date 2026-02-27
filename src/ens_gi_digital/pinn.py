@@ -45,6 +45,8 @@ import tempfile
 import copy
 import os
 import shutil
+import warnings
+import concurrent.futures
 
 try:
     import tensorflow as tf
@@ -72,7 +74,7 @@ if TYPE_CHECKING:
     from tensorflow import keras
 
 # Import core digital twin
-from .core import ENSGIDigitalTwin, MembraneParams, NetworkParams, ICCParams
+from .core import ENSGIDigitalTwin, MembraneParams, NetworkParams, ICCParams, _run_single_simulation
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -92,10 +94,21 @@ class PINNConfig:
     validation_split: float = 0.2       # Validation data fraction
     early_stopping_patience: int = 100  # Early stopping patience
     use_ode_residuals: bool = False     # Use real HH ODE residuals (True) or fast constraints (False)
+    barrier_type: str = 'hinge'         # 'hinge' or 'exp'
+    barrier_weight: float = 100.0       # Hard pharmacology penalty weight
+    barrier_margin: float = 0.02        # Keep predictions away from exact bounds in normalized space
+    adaptive_loss_balance: bool = False # Enable ReLoBRaLo-style lambda adaptation
+    adaptive_loss_alpha: float = 0.9    # Smoothing factor for adaptive lambda updates
+    adaptive_lambda_min: float = 0.01   # Lower bound for adaptive lambda_physics
+    adaptive_lambda_max: float = 50.0   # Upper bound for adaptive lambda_physics
+    adaptive_collocation: bool = False  # Focus feature sampling on high dV/dt events
+    collocation_focus_power: float = 2.0  # Higher value = stronger focus on spikes
 
     def __post_init__(self):
         if self.hidden_dims is None:
             self.hidden_dims = [128, 128, 64, 32]
+        if self.barrier_type not in ('hinge', 'exp'):
+            raise ValueError("barrier_type must be 'hinge' or 'exp'")
 
 
 def build_mlp_network(input_dim: int, output_dim: int,
@@ -245,7 +258,16 @@ class PINNEstimator:
             'val_loss': [],
             'data_loss': [],
             'physics_loss': [],
+            'barrier_loss': [],
+            'lambda_data': [],
+            'lambda_physics': [],
         }
+
+        # Dynamic loss weights (used when adaptive_loss_balance=True)
+        self.current_lambda_data = float(self.config.lambda_data)
+        self.current_lambda_physics = float(self.config.lambda_physics)
+        self._initial_data_loss = None
+        self._initial_physics_loss = None
 
         # Parameter bounds (for normalization and constraints)
         self.param_bounds = self._get_parameter_bounds()
@@ -287,7 +309,7 @@ class PINNEstimator:
             'g_K': (20.0, 80.0),
             'g_Ca': (1.0, 10.0),
             'g_L': (0.1, 1.0),
-            'omega': (0.001, 0.02),         # rad/ms (corresponds to ~1-12 cpm)
+            'omega': (0.00015, 0.0008),     # rad/ms (~1.4-7.6 cpm)
             'coupling_strength': (0.05, 1.0),
             'excitatory_weight': (0.1, 1.5),
             'inhibitory_weight': (0.1, 1.5),
@@ -300,11 +322,11 @@ class PINNEstimator:
 
     def _normalize_parameters(self, params: np.ndarray) -> np.ndarray:
         """Normalize parameters to [0, 1] range."""
-        normalized = np.zeros_like(params)
-        for i, name in enumerate(self.parameter_names):
-            low, high = self.param_bounds[name]
-            normalized[i] = (params[i] - low) / (high - low)
-        return normalized
+        params = np.asarray(params, dtype=np.float32)
+        lows = np.array([self.param_bounds[n][0] for n in self.parameter_names], dtype=np.float32)
+        highs = np.array([self.param_bounds[n][1] for n in self.parameter_names], dtype=np.float32)
+        scales = highs - lows
+        return (params - lows) / scales
 
     def _denormalize_parameters(self, normalized_params):
         """Convert normalized [0,1] parameters to physical units.
@@ -322,6 +344,33 @@ class PINNEstimator:
         )
         # broadcast mul/add works for both np.ndarray and tf.Tensor
         return normalized_params * scales + offsets
+
+    def _adaptive_time_indices(self, signal: np.ndarray, n_points: int) -> np.ndarray:
+        """Select time indices with higher density near high-slope events."""
+        t = signal.shape[0]
+        if t <= n_points:
+            return np.arange(t, dtype=np.int32)
+
+        grad = np.abs(np.gradient(signal.astype(np.float64)))
+        # Keep non-zero baseline probability so resting states are still represented.
+        weights = grad ** float(self.config.collocation_focus_power) + 1e-6
+        weights = weights / np.sum(weights)
+        chosen = np.random.choice(np.arange(t), size=n_points, replace=False, p=weights)
+        chosen.sort()
+        return chosen.astype(np.int32)
+
+    def _sample_signal(self, signal: np.ndarray, n_points: int, adaptive: bool = False) -> np.ndarray:
+        """Sample 1D signal to fixed number of points using uniform/adaptive strategy."""
+        if signal.shape[0] <= n_points:
+            x_old = np.arange(signal.shape[0])
+            x_new = np.linspace(0, signal.shape[0] - 1, n_points)
+            return np.interp(x_new, x_old, signal)
+
+        if adaptive:
+            idx = self._adaptive_time_indices(signal, n_points)
+            return signal[idx]
+
+        return np.interp(np.linspace(0, signal.shape[0] - 1, n_points), np.arange(signal.shape[0]), signal)
 
     def _extract_features_from_signal(self,
                                      voltages: np.ndarray,
@@ -345,17 +394,19 @@ class PINNEstimator:
 
         # Downsample time series (average across neurons)
         v_mean = voltages.mean(axis=1)  # [T]
-        v_downsampled = np.interp(np.linspace(0, T-1, 50), np.arange(T), v_mean)
+        v_downsampled = self._sample_signal(
+            v_mean, 50, adaptive=bool(self.config.adaptive_collocation)
+        )
 
         if forces is not None:
             f_mean = forces.mean(axis=1)
-            f_downsampled = np.interp(np.linspace(0, T-1, 25), np.arange(T), f_mean)
+            f_downsampled = self._sample_signal(f_mean, 25, adaptive=False)
         else:
             f_downsampled = np.zeros(25)
 
         if calcium is not None:
             ca_mean = calcium.mean(axis=1)
-            ca_downsampled = np.interp(np.linspace(0, T-1, 25), np.arange(T), ca_mean)
+            ca_downsampled = self._sample_signal(ca_mean, 25, adaptive=False)
         else:
             ca_downsampled = np.zeros(25)
 
@@ -397,7 +448,9 @@ class PINNEstimator:
                                   n_samples: int = 1000,
                                   duration: float = 2000.0,
                                   dt: float = 0.05,
-                                  noise_level: float = 0.05) -> Dict[str, np.ndarray]:
+                                  noise_level: float = 0.05,
+                                  adaptive_collocation: Optional[bool] = None,
+                                  sim_batch_size: int = 500) -> Dict[str, np.ndarray]:
         """Generate synthetic training data with known parameters.
 
         This is crucial for validating PINN before applying to real patients.
@@ -407,6 +460,10 @@ class PINNEstimator:
             duration: Simulation duration per sample (ms)
             dt: Time step (ms)
             noise_level: Gaussian noise level (std as fraction of signal)
+            adaptive_collocation: Override config.adaptive_collocation for this dataset
+            sim_batch_size: Simulations submitted to the worker pool per batch.
+                Smaller values reduce peak CPU and memory pressure at the cost
+                of slightly longer total runtime.  Default 500.
 
         Returns:
             dict with:
@@ -416,7 +473,12 @@ class PINNEstimator:
                 'forces': [n_samples, n_timepoints, n_neurons] force traces
                 'calcium': [n_samples, n_timepoints, n_neurons] calcium traces
         """
-        print(f"[PINN] Generating {n_samples} synthetic samples...")
+        print(f"[PINN] Generating {n_samples} synthetic samples "
+              f"(batch_size={sim_batch_size})...")
+
+        prev_adaptive = self.config.adaptive_collocation
+        if adaptive_collocation is not None:
+            self.config.adaptive_collocation = bool(adaptive_collocation)
 
         features_list = []
         params_list = []
@@ -424,54 +486,107 @@ class PINNEstimator:
         forces_list = []
         calcium_list = []
 
-        for i in range(n_samples):
-            # Sample random parameters within bounds
-            params = np.zeros(self.n_params)
-            for j, name in enumerate(self.parameter_names):
-                low, high = self.param_bounds[name]
-                params[j] = np.random.uniform(low, high)
+        try:
+            # ── Vectorised parameter sampling (all samples at once) ──────────
+            all_params = np.column_stack([
+                np.random.uniform(self.param_bounds[name][0],
+                                  self.param_bounds[name][1],
+                                  n_samples)
+                for name in self.parameter_names
+            ])  # shape: [n_samples, n_params]
 
-            # Create twin with these parameters
-            twin = ENSGIDigitalTwin(n_segments=self.twin.n_segments)
+            # Serialisable snapshot of the reference-twin's base parameters
+            twin_cfg = {
+                'n_segments': self.twin.n_segments,
+                'neuron_params': [copy.copy(n.params)
+                                  for n in self.twin.network.neurons],
+                'network_params': copy.copy(self.twin.network.params),
+                'icc_params':     copy.copy(self.twin.icc.params),
+                'muscle_params':  copy.copy(self.twin.muscle.params),
+            }
 
-            # Copy ALL base parameters from self.twin so synthetic data matches
-            # the same physiological context (e.g. IBS-C profile) as the target twin.
-            # This prevents distribution shift when self.twin has a profile applied.
-            for neuron_ref, neuron_tgt in zip(self.twin.network.neurons, twin.network.neurons):
-                neuron_tgt.params = copy.copy(neuron_ref.params)
-            twin.network.params = copy.copy(self.twin.network.params)
-            twin.icc.params = copy.copy(self.twin.icc.params)
-            twin.muscle.params = copy.copy(self.twin.muscle.params)
+            # ── Try GPU-batched path first (PyTorch CUDA) ────────────────────
+            # All B samples are simulated simultaneously in a single GPU pass.
+            # Falls back gracefully to the CPU ProcessPoolExecutor when:
+            #   • PyTorch is not installed
+            #   • No CUDA device is available
+            #   • Any runtime error occurs (e.g. OOM)
+            _gpu_ok = False
+            voltages_arr = forces_arr = calcium_arr = None
+            try:
+                import torch  # noqa: PLC0415 — intentionally lazy
+                if torch.cuda.is_available():
+                    from .gpu_sim import batch_simulate_gpu  # noqa: PLC0415
+                    print(f"[PINN]   GPU path: simulating {n_samples} samples "
+                          f"on {torch.cuda.get_device_name(0)} ...")
+                    voltages_arr, forces_arr, calcium_arr = batch_simulate_gpu(
+                        all_params=all_params,
+                        base_twin_cfg=twin_cfg,
+                        n_segments=self.twin.n_segments,
+                        duration=duration,
+                        dt=dt,
+                        noise_level=noise_level,
+                    )
+                    _gpu_ok = True
+                    print("[PINN]   GPU simulation complete.")
+                else:
+                    print("[PINN]   No CUDA device found — using CPU pool.")
+            except Exception as _gpu_exc:
+                print(f"[PINN]   GPU sim unavailable ({_gpu_exc}), "
+                      f"falling back to CPU pool.")
 
-            # Apply parameters
-            for j, name in enumerate(self.parameter_names):
-                if hasattr(twin.network.neurons[0].params, name):
-                    for neuron in twin.network.neurons:
-                        setattr(neuron.params, name, params[j])
-                elif hasattr(twin.network.params, name):
-                    setattr(twin.network.params, name, params[j])
-                elif hasattr(twin.icc.params, name):
-                    setattr(twin.icc.params, name, params[j])
+            if _gpu_ok:
+                # ── Post-process GPU results ──────────────────────────────────
+                # voltages_arr / forces_arr / calcium_arr: [B, T_stored, N]
+                for i in range(n_samples):
+                    features = self._extract_features_from_signal(
+                        voltages_arr[i], forces_arr[i], calcium_arr[i])
+                    features_list.append(features)
+                    params_list.append(self._normalize_parameters(all_params[i]))
+                    voltages_list.append(voltages_arr[i])
+                    forces_list.append(forces_arr[i])
+                    calcium_list.append(calcium_arr[i])
+            else:
+                # ── CPU fallback: batched ProcessPoolExecutor ─────────────────
+                # One args-tuple per sample; chunksize keeps IPC overhead low
+                args_iter = [
+                    (twin_cfg, all_params[i], self.parameter_names,
+                     duration, dt, noise_level)
+                    for i in range(n_samples)
+                ]
 
-            # Run simulation
-            result = twin.run(duration, dt, I_stim={3: 10.0}, record=True, verbose=False)
+                # Cap workers at 4 — beyond that, gains plateau and CPU/RAM spike
+                n_workers = min(4, os.cpu_count() or 4, n_samples)
+                n_batches  = max(1, (n_samples + sim_batch_size - 1) // sim_batch_size)
+                sim_results = []
 
-            # Add noise (simulates measurement noise)
-            voltages = result['voltages'] + np.random.randn(*result['voltages'].shape) * noise_level * np.std(result['voltages'])
-            forces = result['force'] + np.random.randn(*result['force'].shape) * noise_level * np.std(result['force'])
-            calcium = result['calcium'] + np.random.randn(*result['calcium'].shape) * noise_level * np.std(result['calcium'])
+                # One ProcessPoolExecutor for the whole dataset (workers spawned once).
+                # Each batch completes fully before the next is submitted, giving the
+                # OS and CPU a natural breathing window between bursts.
+                with concurrent.futures.ProcessPoolExecutor(
+                        max_workers=n_workers) as pool:
+                    for batch_idx in range(n_batches):
+                        batch_start = batch_idx * sim_batch_size
+                        batch_end   = min(batch_start + sim_batch_size, n_samples)
+                        batch_args  = args_iter[batch_start:batch_end]
+                        print(f"[PINN]   Batch {batch_idx + 1}/{n_batches}: "
+                              f"samples {batch_start + 1}–{batch_end}")
+                        batch_results = list(pool.map(
+                            _run_single_simulation, batch_args, chunksize=1))
+                        sim_results.extend(batch_results)
 
-            # Extract features
-            features = self._extract_features_from_signal(voltages, forces, calcium)
+                # Post-process (feature extraction) in main process
+                for i, (voltages, forces, calcium) in enumerate(sim_results):
+                    features = self._extract_features_from_signal(
+                        voltages, forces, calcium)
+                    features_list.append(features)
+                    params_list.append(self._normalize_parameters(all_params[i]))
+                    voltages_list.append(voltages)
+                    forces_list.append(forces)
+                    calcium_list.append(calcium)
 
-            features_list.append(features)
-            params_list.append(self._normalize_parameters(params))
-            voltages_list.append(voltages)
-            forces_list.append(forces)
-            calcium_list.append(calcium)
-
-            if (i + 1) % 100 == 0:
-                print(f"  Generated {i+1}/{n_samples} samples...")
+        finally:
+            self.config.adaptive_collocation = prev_adaptive
 
         features_array = np.array(features_list)
         params_array = np.array(params_list)
@@ -480,13 +595,14 @@ class PINNEstimator:
         calcium_array = np.array(calcium_list)
 
         print(f"[PINN] Synthetic dataset complete: {features_array.shape}")
-        return {
+        out = {
             'features': features_array,
             'parameters': params_array,
             'voltages': voltages_array,
             'forces': forces_array,
             'calcium': calcium_array
         }
+        return out
 
     @staticmethod
     @tf.function
@@ -580,6 +696,43 @@ class PINNEstimator:
         )
 
         return residual
+
+    def _compute_barrier_loss(self, predicted_params_normalized: 'tf.Tensor') -> 'tf.Tensor':
+        """Hard pharmacological barrier to keep outputs in valid parameter ranges."""
+        margin = tf.constant(float(self.config.barrier_margin), dtype=tf.float32)
+        p = tf.cast(predicted_params_normalized, tf.float32)
+        low_violation = tf.nn.relu(margin - p)
+        high_violation = tf.nn.relu(p - (1.0 - margin))
+
+        if self.config.barrier_type == 'exp':
+            # Exponential wall: quickly explodes once violating bounds.
+            barrier = tf.exp(8.0 * (low_violation + high_violation)) - 1.0
+            return tf.reduce_mean(barrier)
+
+        # Default hinge-squared wall.
+        return tf.reduce_mean(tf.square(low_violation) + tf.square(high_violation))
+
+    def _update_adaptive_loss_weights(self, data_loss: float, physics_loss: float):
+        """ReLoBRaLo-style adaptive balancing of data/physics weights."""
+        eps = 1e-8
+        if self._initial_data_loss is None:
+            self._initial_data_loss = max(float(data_loss), eps)
+        if self._initial_physics_loss is None:
+            self._initial_physics_loss = max(float(physics_loss), eps)
+
+        data_ratio = float(data_loss) / self._initial_data_loss
+        physics_ratio = float(physics_loss) / self._initial_physics_loss
+
+        target_lambda_physics = float(self.config.lambda_physics) * (data_ratio / (physics_ratio + eps))
+        target_lambda_physics = float(np.clip(
+            target_lambda_physics,
+            float(self.config.adaptive_lambda_min),
+            float(self.config.adaptive_lambda_max),
+        ))
+
+        alpha = float(self.config.adaptive_loss_alpha)
+        self.current_lambda_physics = alpha * self.current_lambda_physics + (1.0 - alpha) * target_lambda_physics
+        self.current_lambda_data = float(self.config.lambda_data)
 
     def _compute_physics_loss(self, predicted_params_normalized: 'tf.Tensor',
                              features: 'tf.Tensor',
@@ -697,7 +850,13 @@ class PINNEstimator:
             return physics_loss
 
     @tf.function
-    def _train_step(self, features: 'tf.Tensor', true_params: 'tf.Tensor') -> Tuple['tf.Tensor', 'tf.Tensor', 'tf.Tensor']:
+    def _train_step(
+        self,
+        features: 'tf.Tensor',
+        true_params: 'tf.Tensor',
+        lambda_data: float,
+        lambda_physics: float,
+    ) -> Tuple['tf.Tensor', 'tf.Tensor', 'tf.Tensor', 'tf.Tensor']:
         """Single training step with combined loss."""
         with tf.GradientTape() as tape:
             # Forward pass
@@ -714,16 +873,20 @@ class PINNEstimator:
                 predicted_params, features,
                 use_ode_residuals=self.config.use_ode_residuals
             )
+            barrier_loss = self._compute_barrier_loss(predicted_params)
 
             # Combined loss
-            total_loss = (self.config.lambda_data * data_loss +
-                         self.config.lambda_physics * physics_loss)
+            total_loss = (
+                tf.cast(lambda_data, tf.float32) * data_loss +
+                tf.cast(lambda_physics, tf.float32) * physics_loss +
+                tf.cast(self.config.barrier_weight, tf.float32) * barrier_loss
+            )
 
         # Backpropagation
         gradients = tape.gradient(total_loss, self.model.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
-        return total_loss, data_loss, physics_loss
+        return total_loss, data_loss, physics_loss, barrier_loss
 
     def train(self,
              features: Optional[np.ndarray] = None,
@@ -756,6 +919,12 @@ class PINNEstimator:
         if use_ode_residuals is not None:
             self.config.use_ode_residuals = use_ode_residuals
 
+        # Reset dynamic balancing state at the start of each train() call.
+        self.current_lambda_data = float(self.config.lambda_data)
+        self.current_lambda_physics = float(self.config.lambda_physics)
+        self._initial_data_loss = None
+        self._initial_physics_loss = None
+
         # Generate or validate data
         if features is None or parameters is None:
             if generate_data:
@@ -775,8 +944,15 @@ class PINNEstimator:
 
         # Split into train/validation
         n_samples = features.shape[0]
-        n_val = int(n_samples * self.config.validation_split)
-        n_train = n_samples - n_val
+        if n_samples <= 1:
+            n_val = 0
+            n_train = n_samples
+        else:
+            n_val = max(1, int(n_samples * self.config.validation_split))
+            n_train = n_samples - n_val
+            if n_train < 1:
+                n_train = n_samples - 1
+                n_val = 1
 
         # Adaptive batch sizing for small datasets
         if batch_size is None:
@@ -838,40 +1014,62 @@ class PINNEstimator:
             epoch_losses = []
             epoch_data_losses = []
             epoch_physics_losses = []
+            epoch_barrier_losses = []
 
             for batch_features, batch_params in train_dataset:
-                loss, data_loss, physics_loss = self._train_step(batch_features, batch_params)
+                loss, data_loss, physics_loss, barrier_loss = self._train_step(
+                    batch_features,
+                    batch_params,
+                    self.current_lambda_data,
+                    self.current_lambda_physics,
+                )
                 epoch_losses.append(loss.numpy())
                 epoch_data_losses.append(data_loss.numpy())
                 epoch_physics_losses.append(physics_loss.numpy())
+                epoch_barrier_losses.append(barrier_loss.numpy())
 
             train_loss = np.mean(epoch_losses)
             train_data_loss = np.mean(epoch_data_losses)
             train_physics_loss = np.mean(epoch_physics_losses)
+            train_barrier_loss = np.mean(epoch_barrier_losses)
+
+            if self.config.adaptive_loss_balance:
+                self._update_adaptive_loss_weights(train_data_loss, train_physics_loss)
 
             # Validation
             val_losses = []
-            for batch_features, batch_params in val_dataset:
-                pred_params = self.model(batch_features, training=False)
-                # Ensure dtype compatibility (model outputs float32, params may be float64)
-                batch_params = tf.cast(batch_params, tf.float32)
-                val_loss = tf.reduce_mean(tf.square(pred_params - batch_params))
-                val_losses.append(val_loss.numpy())
-
-            val_loss = np.mean(val_losses)
+            if n_val > 0:
+                for batch_features, batch_params in val_dataset:
+                    pred_params = self.model(batch_features, training=False)
+                    # Ensure dtype compatibility (model outputs float32, params may be float64)
+                    batch_params = tf.cast(batch_params, tf.float32)
+                    val_loss = tf.reduce_mean(tf.square(pred_params - batch_params))
+                    val_losses.append(val_loss.numpy())
+                val_loss = np.mean(val_losses)
+            else:
+                val_loss = train_loss
 
             # Record history
             self.history['train_loss'].append(train_loss)
             self.history['val_loss'].append(val_loss)
             self.history['data_loss'].append(train_data_loss)
             self.history['physics_loss'].append(train_physics_loss)
+            self.history['barrier_loss'].append(train_barrier_loss)
+            self.history['lambda_data'].append(self.current_lambda_data)
+            self.history['lambda_physics'].append(self.current_lambda_physics)
 
             # Early stopping
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 patience_counter = 0
                 # Save best model to temporary directory
-                self.model.save_weights(self._best_weights_path)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message="__array__ implementation doesn't accept a copy keyword",
+                        category=DeprecationWarning,
+                    )
+                    self.model.save_weights(self._best_weights_path)
             else:
                 patience_counter += 1
 
@@ -881,6 +1079,8 @@ class PINNEstimator:
                       f"Loss: {train_loss:.6f} - "
                       f"Data: {train_data_loss:.6f} - "
                       f"Physics: {train_physics_loss:.6f} - "
+                      f"Barrier: {train_barrier_loss:.6f} - "
+                      f"LambdaP: {self.current_lambda_physics:.4f} - "
                       f"Val: {val_loss:.6f}")
 
             # Early stopping check
@@ -890,7 +1090,13 @@ class PINNEstimator:
 
         # Load best weights if they exist
         if os.path.exists(self._best_weights_path):
-            self.model.load_weights(self._best_weights_path)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="__array__ implementation doesn't accept a copy keyword",
+                    category=DeprecationWarning,
+                )
+                self.model.load_weights(self._best_weights_path)
         print(f"[PINN] Training complete. Best val loss: {best_val_loss:.6f}")
 
         return self.history
@@ -1003,6 +1209,16 @@ class PINNEstimator:
                 'learning_rate': self.config.learning_rate,
                 'lambda_data': self.config.lambda_data,
                 'lambda_physics': self.config.lambda_physics,
+                'use_ode_residuals': self.config.use_ode_residuals,
+                'barrier_type': self.config.barrier_type,
+                'barrier_weight': self.config.barrier_weight,
+                'barrier_margin': self.config.barrier_margin,
+                'adaptive_loss_balance': self.config.adaptive_loss_balance,
+                'adaptive_loss_alpha': self.config.adaptive_loss_alpha,
+                'adaptive_lambda_min': self.config.adaptive_lambda_min,
+                'adaptive_lambda_max': self.config.adaptive_lambda_max,
+                'adaptive_collocation': self.config.adaptive_collocation,
+                'collocation_focus_power': self.config.collocation_focus_power,
             },
             'feature_mean': self.feature_mean.tolist() if self.feature_mean is not None else None,
             'feature_std': self.feature_std.tolist() if self.feature_std is not None else None,
@@ -1116,7 +1332,7 @@ def demo_pinn():
         'g_Na': 135.0,
         'g_K': 42.0,
         'g_Ca': 5.5,
-        'omega': 0.006,
+        'omega': 0.00042,
         'coupling_strength': 0.4,
     }
 

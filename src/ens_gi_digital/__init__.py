@@ -18,14 +18,10 @@ from .core import (
     IBS_PROFILES,
 )
 
-# Machine learning frameworks
-from .pinn import PINNEstimator
-
-try:
-    from .bayesian import BayesianEstimator
-except ImportError:
-    # PyMC3 is optional
-    BayesianEstimator = None
+# Machine learning frameworks — lazy-loaded so that worker processes spawned by
+# ProcessPoolExecutor (which import this package to find the simulation worker)
+# do not trigger TensorFlow / CUDA initialisation.
+# from .pinn import PINNEstimator  ← moved to __getattr__ below
 
 # Drug library
 from .drug_library import (
@@ -38,12 +34,24 @@ from .drug_library import (
 # Data loading
 from .patient_data import PatientDataLoader
 
-# Clinical workflow
-try:
-    from .clinical_workflow import ClinicalWorkflow
-except (ImportError, SyntaxError):
-    # Skip if has syntax issues
-    ClinicalWorkflow = None
+def __getattr__(name):
+    """Lazy-load optional heavy modules to avoid side-effect warnings on import."""
+    if name == "PINNEstimator":
+        from .pinn import PINNEstimator
+        return PINNEstimator
+    if name == "BayesianEstimator":
+        try:
+            from .bayesian import BayesianEstimator
+            return BayesianEstimator
+        except ImportError:
+            return None
+    if name == "ClinicalWorkflow":
+        try:
+            from .clinical_workflow import ClinicalWorkflow
+            return ClinicalWorkflow
+        except (ImportError, SyntaxError):
+            return None
+    raise AttributeError(f"module 'ens_gi_digital' has no attribute {name!r}")
 
 __all__ = [
     "ENSGIDigitalTwin",

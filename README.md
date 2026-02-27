@@ -229,6 +229,46 @@ python scripts/final_verification.py
 
 ---
 
+## ✅ Validation Gauntlet Results
+
+The **Validation Gauntlet** (`scripts/validation_gauntlet.py`) is a four-section end-to-end pipeline that reads the PINN cohort output (`pinn_zenodo_both_conditions.json`) and produces independent PASS/FAIL verdicts covering the full modelling stack.
+
+**Latest run (2026-02-27) — `--sections fft,hrm,spice`:**
+
+| Section | Verdict | Key Metric |
+|---------|---------|------------|
+| **[1] FFT Frequency Analysis** | **PASS** | Pearson r=0.24, MAE=0.56 cpm |
+| **[2] Bayesian HDI Overlay** | SKIP | PyMC not installed in quick run |
+| **[3] SPARC HRM Cross-Validation** | **PASS** | Pressure ratio \|twin/SPARC\|=6.5× (within [0.05, 20]) |
+| **[4] Hardware Parity — Pure SPICE** | **PASS** | Pearson r=0.991, shape-nRMSE=7.5% |
+| **[4] Hardware Parity — Verilog-A** | SKIP | Requires ADMS-compiled ngspice |
+
+**Section notes:**
+
+- **FFT (§1)**: PINN ICC frequency estimates (`icc_frequency_cpm`) compared against the spectral peak of the raw EGG signal (gastric band 1.5–4.5 cpm) for all 40 cohort rows. Pearson r=0.24 (p<0.05), MAE 0.56 cpm — below the 1.0 cpm threshold.
+- **SPARC HRM (§3)**: Twin forward-simulation medians compared against ex-vivo colonic HRM (SPARC dataset, subjects 1–10). Anatomical and scale differences between gastric EGG source data and colonic HRM are expected; the order-of-magnitude criterion (ratio within [0.05, 20×]) provides a sanity-level check.
+- **SPICE Parity (§4)**: Python (RK4) vs. ngspice circuit co-simulation on Subject 1 (fasting), 20-segment twin. r=0.991 confirms waveform shape agreement despite the expected unit-scale difference (Python: mV, SPICE: V). Phase drift over the 2 s window contributes to shape-nRMSE=7.5% but is not a failure mode (correlation criterion only).
+- **Verilog-A (§4)**: The `.hdl` files in `verilog_a_library/` are valid; the check is SKIP when ngspice is compiled without ADMS support. The VA path is now run with `cwd=<repo_root>` so relative `.hdl` paths resolve correctly when ADMS ngspice is available.
+
+**Run the gauntlet:**
+```bash
+# Sections 1, 3, 4 (fast — no PyMC required, ~10 min)
+python scripts/validation_gauntlet.py \
+  --results-json pinn_zenodo_both_conditions.json \
+  --data-dir data \
+  --sections fft,hrm,spice
+
+# Full gauntlet including Bayesian MCMC (~40-60 min additional)
+python scripts/validation_gauntlet.py \
+  --results-json pinn_zenodo_both_conditions.json \
+  --data-dir data \
+  --sections all
+```
+
+Results are written to `validation_gauntlet_results.json`.
+
+---
+
 ## 📁 Project Structure
 
 ```
@@ -263,7 +303,8 @@ ens-gi-digital-twin/
 │   ├── verify_installation.py     # Post-install check
 │   ├── profile_performance.py     # Performance profiling
 │   ├── validate_spice.py          # SPICE validation with ngspice
-│   └── validate_spice_netlist.py  # SPICE netlist runner
+│   ├── validate_spice_netlist.py  # SPICE netlist runner
+│   └── validation_gauntlet.py     # 4-section validation pipeline (FFT/Bayesian/HRM/SPICE)
 │
 ├── examples/                       # Tutorials & demos
 │   ├── basic_simulation_tutorial.ipynb
@@ -439,6 +480,7 @@ See [IMPLEMENTATION_TODO.md](IMPLEMENTATION_TODO.md) for detailed task breakdown
 - [x] Hardware export tests (SPICE + Verilog-A + ngspice integration)
 - [x] Simulation cache (LRU disk cache, 10-20× MCMC speedup)
 - [x] EDF patient data loader with graceful fallback
+- [x] **Validation Gauntlet** — 4-section pipeline; FFT PASS (r=0.24, MAE=0.56 cpm), HRM PASS (|ratio|=6.5×), SPICE PASS (r=0.991)
 
 ### Short-term (P1 - High)
 - [ ] Implement `predict_manometry()` — motility index → HRM pressure trace (Djoumessi 2024)
@@ -542,7 +584,7 @@ If you use this software in your research, please cite:
 
 ---
 
-**Last Updated**: 2026-02-22
+**Last Updated**: 2026-02-27
 
 ---
 

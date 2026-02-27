@@ -16,6 +16,7 @@ Author: Mahdad
 License: MIT
 """
 
+import copy
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Tuple
@@ -1452,6 +1453,57 @@ def demo():
         d_val = twin_d.extract_biomarkers().get(key, 0)
         c_val = twin_c.extract_biomarkers().get(key, 0)
         print(f"  {key:<30} {h_val:>10.2f} {d_val:>10.2f} {c_val:>10.2f}")
+
+
+def _run_single_simulation(args):
+    """Module-level worker for ProcessPoolExecutor.
+
+    Runs one full ODE simulation with the given parameter set and returns the
+    raw signal arrays.  Lives in core.py (no TensorFlow dependency) so that
+    spawned worker processes never trigger GPU/CUDA initialisation.
+
+    Args:
+        args: tuple of
+            twin_cfg       – serialisable dict produced by
+                             PINNEstimator._build_twin_cfg()
+            sample_params  – 1-D np.ndarray of raw (un-normalised) param values
+            parameter_names – list[str] of parameter names
+            duration       – simulation duration (ms)
+            dt             – time step (ms)
+            noise_level    – Gaussian noise fraction
+
+    Returns:
+        (voltages, forces, calcium) as np.ndarray, each shape [T, N]
+    """
+    twin_cfg, sample_params, parameter_names, duration, dt, noise_level = args
+
+    twin = ENSGIDigitalTwin(n_segments=twin_cfg['n_segments'])
+
+    # Restore reference-twin base parameters so the simulation context matches
+    for neuron, p in zip(twin.network.neurons, twin_cfg['neuron_params']):
+        neuron.params = copy.copy(p)
+    twin.network.params = copy.copy(twin_cfg['network_params'])
+    twin.icc.params = copy.copy(twin_cfg['icc_params'])
+    twin.muscle.params = copy.copy(twin_cfg['muscle_params'])
+
+    # Apply the sampled parameters
+    for j, name in enumerate(parameter_names):
+        if hasattr(twin.network.neurons[0].params, name):
+            for neuron in twin.network.neurons:
+                setattr(neuron.params, name, sample_params[j])
+        elif hasattr(twin.network.params, name):
+            setattr(twin.network.params, name, sample_params[j])
+        elif hasattr(twin.icc.params, name):
+            setattr(twin.icc.params, name, sample_params[j])
+
+    result = twin.run(duration, dt, I_stim={3: 10.0}, record=True, verbose=False)
+
+    rng = np.random.default_rng()  # independent RNG per worker
+    voltages = result['voltages'] + rng.standard_normal(result['voltages'].shape) * noise_level * np.std(result['voltages'])
+    forces   = result['force']    + rng.standard_normal(result['force'].shape)    * noise_level * np.std(result['force'])
+    calcium  = result['calcium']  + rng.standard_normal(result['calcium'].shape)  * noise_level * np.std(result['calcium'])
+
+    return voltages, forces, calcium
 
 
 if __name__ == '__main__':
